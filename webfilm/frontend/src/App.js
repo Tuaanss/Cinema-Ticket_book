@@ -9,6 +9,7 @@ import FoodsRoute from "./components/routes/FoodsRoute";
 import UserRoute from "./components/routes/UserRoute";
 import MovieDetailRoute from "./components/routes/MovieDetailRoute";
 import BookingRoute from "./components/routes/BookingRoute";
+import AdminRoute from "./components/routes/AdminRoute";
 import PromoSlider from "./components/PromoSlider";
 import Footer from "./components/Footer";
 import { movieService } from "./services/movieService";
@@ -339,12 +340,23 @@ function AppContent() {
               />
             } 
           />
+          <Route
+            path="/admin/*"
+            element={
+              <AdminRoute
+                user={user}
+                onAuthRequired={handleAuthRequired}
+              />
+            }
+          />
         </Routes>
 
-        <div className="seamless-background-wrapper">
-          <PromoSlider />
-          <Footer />
-        </div>
+        {!location.pathname.startsWith('/admin') && (
+          <div className="seamless-background-wrapper">
+            <PromoSlider />
+            <Footer />
+          </div>
+        )}
       </div>
 
       <AuthModal

@@ -78,7 +78,7 @@ app.post('/api/auth/register', async (req, res) => {
     res.status(201).json({
       message: 'Đăng ký thành công',
       token,
-      user: { id: result.insertId, name, email }
+      user: { id: result.insertId, name, email, role: 'user' }
     });
 
   } catch (error) {
@@ -130,7 +130,8 @@ app.post('/api/auth/login', async (req, res) => {
         email: user.email,
         phone: user.phone,
         points: user.points,
-        membership_level: user.membership_level
+        membership_level: user.membership_level,
+        role: user.role
       }
     });
 
@@ -144,7 +145,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/auth/profile', authenticateToken, async (req, res) => {
   try {
     const [users] = await pool.execute(
-      'SELECT id, name, email, phone, points, membership_level FROM users WHERE id = ?',
+      'SELECT id, name, email, phone, points, membership_level, role FROM users WHERE id = ?',
       [req.user.userId]
     );
 
@@ -1244,6 +1245,127 @@ app.post('/api/bookings', authenticateToken, async (req, res) => {
     console.error('Lỗi đặt vé:', error);
     console.error('Error details:', error.message, error.stack);
     res.status(500).json({ error: 'Lỗi server: ' + error.message });
+  }
+});
+
+// ============ ADMIN APIs ============
+// Thống kê tổng quan cho admin dashboard
+app.get('/api/admin/stats', authenticateToken, async (req, res) => {
+  try {
+    // Kiểm tra quyền admin
+    const [users] = await pool.execute('SELECT role FROM users WHERE id = ?', [req.user.userId]);
+    if (users.length === 0 || users[0].role !== 'admin') {
+      return res.status(403).json({ error: 'Không có quyền truy cập' });
+    }
+
+    // Đơn đặt vé hôm nay
+    const today = new Date().toISOString().split('T')[0];
+    const [todayBookings] = await pool.execute(`
+      SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as revenue
+      FROM bookings
+      WHERE DATE(booking_date) = ?
+    `, [today]);
+
+    // Người dùng mới hôm nay
+    const [newUsers] = await pool.execute(`
+      SELECT COUNT(*) as count
+      FROM users
+      WHERE DATE(created_at) = ?
+    `, [today]);
+
+    // Tổng số phim
+    const [moviesCount] = await pool.execute('SELECT COUNT(*) as count FROM movies');
+
+    // Tổng số người dùng
+    const [usersCount] = await pool.execute('SELECT COUNT(*) as count FROM users');
+
+    // Doanh thu theo ngày (7 ngày gần nhất)
+    const [revenueByDay] = await pool.execute(`
+      SELECT 
+        DATE(booking_date) as date,
+        COUNT(*) as bookings,
+        COALESCE(SUM(total_amount), 0) as revenue
+      FROM bookings
+      WHERE booking_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      GROUP BY DATE(booking_date)
+      ORDER BY date ASC
+    `);
+
+    // Top phim bán chạy (7 ngày gần nhất)
+    const [topMovies] = await pool.execute(`
+      SELECT 
+        m.id,
+        m.title,
+        m.poster_url,
+        COUNT(b.id) as booking_count,
+        COALESCE(SUM(b.total_amount), 0) as revenue
+      FROM movies m
+      LEFT JOIN showtimes s ON m.id = s.movie_id
+      LEFT JOIN bookings b ON s.id = b.showtime_id AND b.booking_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      GROUP BY m.id, m.title, m.poster_url
+      ORDER BY booking_count DESC, revenue DESC
+      LIMIT 5
+    `);
+
+    res.json({
+      overview: {
+        todayBookings: todayBookings[0].count || 0,
+        todayRevenue: todayBookings[0].revenue || 0,
+        newUsersToday: newUsers[0].count || 0,
+        totalMovies: moviesCount[0].count || 0,
+        totalUsers: usersCount[0].count || 0
+      },
+      revenueByDay: revenueByDay,
+      topMovies: topMovies
+    });
+  } catch (error) {
+    console.error('Lỗi lấy thống kê admin:', error);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// Lấy danh sách người dùng (admin)
+app.get('/api/admin/users', authenticateToken, async (req, res) => {
+  try {
+    const [users] = await pool.execute('SELECT role FROM users WHERE id = ?', [req.user.userId]);
+    if (users.length === 0 || users[0].role !== 'admin') {
+      return res.status(403).json({ error: 'Không có quyền truy cập' });
+    }
+
+    const [allUsers] = await pool.execute(`
+      SELECT id, name, email, phone, points, membership_level, role, created_at
+      FROM users
+      ORDER BY created_at DESC
+    `);
+
+    res.json({ users: allUsers });
+  } catch (error) {
+    console.error('Lỗi lấy danh sách người dùng:', error);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// Cập nhật role người dùng (admin)
+app.put('/api/admin/users/:userId/role', authenticateToken, async (req, res) => {
+  try {
+    const [users] = await pool.execute('SELECT role FROM users WHERE id = ?', [req.user.userId]);
+    if (users.length === 0 || users[0].role !== 'admin') {
+      return res.status(403).json({ error: 'Không có quyền truy cập' });
+    }
+
+    const { userId } = req.params;
+    const { role } = req.body;
+
+    if (!['user', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'Role không hợp lệ' });
+    }
+
+    await pool.execute('UPDATE users SET role = ? WHERE id = ?', [role, userId]);
+
+    res.json({ message: 'Cập nhật role thành công' });
+  } catch (error) {
+    console.error('Lỗi cập nhật role:', error);
+    res.status(500).json({ error: 'Lỗi server' });
   }
 });
 

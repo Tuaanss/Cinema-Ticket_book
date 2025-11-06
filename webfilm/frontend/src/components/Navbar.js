@@ -26,6 +26,14 @@ export default function Navbar({ currentPath, openCart, cartCount, user, onLogin
               {label}
             </Link>
           ))}
+          {user && user.role === 'admin' && (
+            <Link 
+              to="/admin" 
+              className={`btn btn-outline ${currentPage === '/admin' ? "active" : ""}`}
+            >
+              Admin
+            </Link>
+          )}
         </nav>
         <div className="right">
           {user ? (
